@@ -17,7 +17,7 @@ A modular, physics-informed machine learning pipeline for seismic P-wave detecti
 ```bash
    python data_mine.py
 ```
-2. **Train the model with physics-informed features:
+2. **Train the model** with physics-informed features:
 ```bash
    python ML-pipeline.py
 ```
