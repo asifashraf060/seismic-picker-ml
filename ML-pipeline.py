@@ -159,22 +159,51 @@ class PhysicsInformedFeatures:
         
         return all_features
 
-class ShiftGradientFeature:
+class MaxAmplitudeFeature:
     @staticmethod
-    def compute(waveform: np.ndarray, target_length: int) -> np.ndarray:
-        # 1) Convert all negative values to positive (absolute value)
-        abs_waveform = np.abs(waveform)
-        # 2) gradient (current – previous)
-        grad = np.diff(abs_waveform, prepend=abs_waveform[0])
-        # 3) resize to target_length (use the same pad‐or‐truncate logic you already have)
-        if len(grad) > target_length:
-            # truncate center
-            start = (len(grad) - target_length) // 2
-            grad = grad[start:start+target_length]
-        elif len(grad) < target_length:
-            # pad at end
-            grad = np.pad(grad, (0, target_length-len(grad)), 'constant')
-        return grad.reshape(1, -1)
+    def compute(waveform: np.ndarray, target_length: int, window_length: np.array) -> np.ndarray:
+        """Compute max amplitude features from a waveform"""
+
+        all_features = []
+
+        for wlen in window_length:
+            wlen = int(wlen)
+
+            # 1) Convert all negative values to positive (absolute value)
+            abs_waveform = np.abs(waveform)
+
+            # 2) Find the maximum value (peak)
+            max_val = np.max(abs_waveform)
+
+            # 3) Divide with its highest values
+            nrml = abs_waveform / max_val
+            zero_mask = np.where(nrml < 0.01)  # Find indices where normalized value is less than 0.01
+
+            # 4) invert the normalization
+            nrml_inv = 1 - nrml
+            nrml_inv[zero_mask] = 0  # Set values below 0.01 to zero
+
+            # 5) Calculate the standard deviation in a sliding window
+            n = len(nrml_inv)
+            mxAmpFt = np.array([
+                np.std(nrml_inv[i : i + wlen])
+                for i in range(n - wlen + 1)
+            ])
+
+            # resize to target_length
+            if len(mxAmpFt) > target_length:
+                # truncate center
+                start = (len(mxAmpFt) - target_length) // 2
+                mxAmpFt = mxAmpFt[start:start+target_length]
+            elif len(mxAmpFt) < target_length:
+                # pad at end
+                mxAmpFt = np.pad(mxAmpFt, (0, target_length-len(mxAmpFt)), 'constant')
+
+            all_features.append(mxAmpFt.reshape(1, -1))
+
+        return np.vstack(all_features)
+
+
 
 # ═══════════════════════════════════════════════════════════════════════════════════════
 # 🏗️ ENHANCED U-NET ARCHITECTURE
@@ -382,18 +411,28 @@ class SeismicDatabaseDataset(Dataset):
     """
     
     def __init__(self, db_path='seismic_data.db', window_size=5, target_length=12300, 
-                 use_physics_features=True, use_shift_gradient=True, 
+                 use_physics_features=True, use_max_amplitude=True, window_length=None,
                  train=True, train_split=0.8, random_seed=42):
         self.db_path = db_path
         self.window_size = window_size
         self.target_length = target_length
         self.use_physics_features = use_physics_features
-        self.use_shift_gradient = use_shift_gradient
-        
+        self.use_max_amplitude = use_max_amplitude
+        self.window_length = window_length
+
         # Initialize physics feature extractor if needed
         if self.use_physics_features:
-            self.feature_extractor = PhysicsInformedFeatures(sampling_rate=100)
+            self.physics_feature_extractor = PhysicsInformedFeatures(sampling_rate=100)
+        else:
+            self.physics_feature_extractor = None
         
+        if self.use_max_amplitude:
+            if self.window_length is None:
+                raise ValueError("window_length must be provided when use_max_amplitude is True")
+            self.max_amplitude_extractor = MaxAmplitudeFeature()
+        else:
+            self.max_amplitude_extractor = None
+
         # Load data from database
         self._load_from_database(train, train_split, random_seed)
         
@@ -511,16 +550,16 @@ class SeismicDatabaseDataset(Dataset):
             # Prepare features
             if self.use_physics_features:
                 # Extract physics-informed features
-                physics_features = self.feature_extractor.compute_all_features(waveform_norm)
+                physics_features = self.physics_feature_extractor.compute_all_features(waveform_norm)
                 final_features = physics_features
             else:
                 # Use only raw waveform
                 final_features = waveform_norm.reshape(1, -1)
             
-            if self.use_shift_gradient:
-                sg_feat = ShiftGradientFeature.compute(waveform_norm, self.target_length)
-                final_features = np.vstack([final_features, sg_feat])
-            
+            if self.use_max_amplitude and self.max_amplitude_extractor is not None:
+                mxAmpFt = self.max_amplitude_extractor.compute(waveform_norm, self.target_length, self.window_length)
+                final_features = np.vstack([final_features, mxAmpFt])
+
             # Ensure features have correct length
             if final_features.shape[1] != self.target_length:
                 # Resize each feature channel
@@ -682,7 +721,8 @@ def evaluate_picks(model, val_dataset, threshold=0.5):
     
     return np.array(pick_errors)
 
-def visualize_features(dataset, sample_idx=0, save_path='features.png', use_physics_features=True):
+def visualize_features(dataset, sample_idx=0, save_path='features.png', use_physics_features=True,
+                       use_max_amplitude=True, window_length=None):
     """Visualize the features for a sample"""
     if sample_idx >= len(dataset):
         print(f"Sample index {sample_idx} out of range")
@@ -708,11 +748,12 @@ def visualize_features(dataset, sample_idx=0, save_path='features.png', use_phys
     else:
         feature_names = ['Raw Waveform']
         title_suffix = "Raw Waveform Only"
-    
-    # Account for shift gradient feature if present
-    if features_np.shape[0] > len(feature_names):
-        feature_names.append('Shift Gradient')
-    
+
+    # Account for max amplitude feature if present
+    if use_max_amplitude:
+        for i in range(len(window_length)):
+            feature_names.append(f'Max Filter WL:{int(window_length[i])}')
+
     # Truncate if we have fewer features than expected
     n_features = min(len(feature_names), features_np.shape[0])
     
@@ -769,26 +810,23 @@ def visualize_features(dataset, sample_idx=0, save_path='features.png', use_phys
     plt.show()
     print(f"Features visualization saved to {save_path}")
 
-def plot_model_predictions(model, dataset, num_examples=5, save_path='model_predictions.png', 
+def plot_model_predictions(model, dataset, num_examples=1, save_path='predictions', 
                           use_physics_features=True):
     """Plot model predictions with features"""
+    if not os.path.exists(save_path):
+        os.mkdir(save_path)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.to(device)
     model.eval()
     
-    # Adjust subplot layout based on features mode
-    if use_physics_features:
-        fig, axes = plt.subplots(num_examples, 3, figsize=(18, 4*num_examples))
-        plot_cols = 3
-    else:
-        fig, axes = plt.subplots(num_examples, 2, figsize=(12, 4*num_examples))
-        plot_cols = 2
-    
-    if num_examples == 1:
-        axes = axes.reshape(1, -1)
-    
     with torch.no_grad():
-        for i in range(min(num_examples, len(dataset))):
+        for i in range(num_examples):
+            if use_physics_features:
+                plt.figure(figsize=(18, 4))
+                col_len = 3
+            else:
+                plt.figure(figsize=(12, 4))
+                col_len = 2
             features, true_label = dataset[i]
             
             # Get metadata
@@ -807,9 +845,9 @@ def plot_model_predictions(model, dataset, num_examples=5, save_path='model_pred
             time_vector = np.linspace(-pre_time, post_time, total_samples)
             
             # Raw waveform
-            ax1 = axes[i, 0]
             raw_waveform = features[0].numpy()  # First channel is raw waveform
-            ax1.plot(time_vector, raw_waveform, 'k-', linewidth=0.8, alpha=0.8)
+            plt.subplot(1, col_len, 1)
+            plt.plot(time_vector, raw_waveform, 'k-', linewidth=0.8, alpha=0.8)
             
             # Add picks
             true_pick_samples = np.where(true_label == 1)[0]
@@ -817,84 +855,84 @@ def plot_model_predictions(model, dataset, num_examples=5, save_path='model_pred
             
             if len(true_pick_samples) > 0:
                 true_pick_time = time_vector[int(np.mean(true_pick_samples))]
-                ax1.axvline(true_pick_time, color='red', linestyle='--', linewidth=2, 
+                plt.axvline(true_pick_time, color='red', linestyle='--', linewidth=2.5, 
                            label=f'True Pick ({true_pick_time:.2f}s)')
             
             model_pick_time = time_vector[model_pick_sample]
-            ax1.axvline(model_pick_time, color='blue', linestyle=':', linewidth=1, 
+            plt.axvline(model_pick_time, color='blue', linestyle=':', linewidth=2, 
                        label=f'Model Pick ({model_pick_time:.2f}s)')
-            ax1.axvline(0, color='orange', linestyle=':', alpha=0.7, label='Earthquake Time')
+            plt.axvline(0, color='orange', linestyle=':', alpha=0.7, label='Earthquake Time')
             
-            ax1.set_xlabel('Time (s)')
-            ax1.set_ylabel('Amplitude')
-            ax1.set_title(f'Station {station_info["station"]} - Raw Waveform')
-            ax1.legend()
-            ax1.grid(True, alpha=0.3)
+            plt.xlabel('Time (s)')
+            plt.ylabel('Amplitude')
+            plt.title(f'Station {station_info["station"]} - Raw Waveform')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
             
             # Physics features plot (only if using physics features)
-            if use_physics_features and plot_cols == 3:
-                ax2 = axes[i, 1]
+            if use_physics_features:
+                plt.subplot(1, col_len, 2)
                 if features.shape[0] > 1:  # Check if we have STA/LTA features
                     sta_lta = features[1].numpy()  # Second channel should be STA/LTA
-                    ax2.plot(time_vector, sta_lta, 'g-', linewidth=1.5, label='STA/LTA (0.5/10s)')
-                    ax2.axhline(y=3.0, color='red', linestyle='--', alpha=0.7, label='Typical Threshold')
+                    plt.plot(time_vector, sta_lta, 'g-', linewidth=1.5, label='STA/LTA (0.5/10s)')
+                    plt.axhline(y=3.0, color='red', linestyle='--', alpha=0.7, label='Typical Threshold')
                 else:
-                    ax2.text(0.5, 0.5, 'No STA/LTA features', transform=ax2.transAxes, ha='center')
-                
+                    plt.text(0.5, 0.5, 'No STA/LTA features', transform=plt.gca().transAxes, ha='center')
+
                 if len(true_pick_samples) > 0:
-                    ax2.axvline(true_pick_time, color='red', linestyle='--', linewidth=2)
-                ax2.axvline(model_pick_time, color='blue', linestyle='-', linewidth=2)
-                ax2.axvline(0, color='orange', linestyle=':', alpha=0.7)
-                
-                ax2.set_xlabel('Time (s)')
-                ax2.set_ylabel('STA/LTA Ratio')
-                ax2.set_title(f'Station {station_info["station"]} - STA/LTA Feature')
-                ax2.legend()
-                ax2.grid(True, alpha=0.3)
-                
-                prob_col = 2
+                    plt.axvline(true_pick_time, color='red', linestyle='--', linewidth=2)
+                plt.axvline(model_pick_time, color='blue', linestyle='-', linewidth=2)
+                plt.axvline(0, color='orange', linestyle=':', alpha=0.7)
+
+                plt.xlabel('Time (s)')
+                plt.ylabel('STA/LTA Ratio')
+                plt.title(f'Station {station_info["station"]} - STA/LTA Feature')
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+
+                prob_col = 3
             else:
-                prob_col = 1
+                prob_col = 2
             
             # Model probability
-            ax3 = axes[i, prob_col]
-            ax3.plot(time_vector, prob, 'b-', linewidth=2, label='P-wave Probability')
-            ax3.fill_between(time_vector, 0, prob, alpha=0.3, color='blue')
-            
+            plt.subplot(1, col_len, prob_col)
+            plt.plot(time_vector, prob, 'b-', linewidth=2, label='P-wave Probability')
+            plt.fill_between(time_vector, 0, prob, alpha=0.3, color='blue')
+
             # Add picks
             if len(true_pick_samples) > 0:
-                ax3.axvline(true_pick_time, color='red', linestyle='--', linewidth=2, 
+                plt.axvline(true_pick_time, color='red', linestyle='--', linewidth=2, 
                            label='True Pick')
                 # Highlight true pick window
                 window_start = time_vector[true_pick_samples[0]]
                 window_end = time_vector[true_pick_samples[-1]]
-                ax3.axvspan(window_start, window_end, alpha=0.2, color='green', 
+                plt.axvspan(window_start, window_end, alpha=0.2, color='green', 
                            label='True Pick Window')
-            
-            ax3.axvline(model_pick_time, color='blue', linestyle='-', linewidth=2, 
+
+            plt.axvline(model_pick_time, color='blue', linestyle='-', linewidth=2, 
                        label='Model Pick')
-            ax3.axvline(0, color='orange', linestyle=':', alpha=0.7, label='Earthquake Time')
-            
-            ax3.set_xlabel('Time (s)')
-            ax3.set_ylabel('P-wave Probability')
-            ax3.set_title(f'Station {station_info["station"]} - Model Output')
-            ax3.set_ylim(0, 1)
-            ax3.legend()
-            ax3.grid(True, alpha=0.3)
-    
-    feature_mode = "Physics-Informed" if use_physics_features else "Raw Waveform"
-    plt.suptitle(f'Model Predictions - {feature_mode} Mode', fontsize=14)
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.show()
-    print(f"Model predictions plot saved to {save_path}")
+            plt.axvline(0, color='orange', linestyle=':', alpha=0.7, label='Earthquake Time')
+
+            plt.xlabel('Time (s)')
+            plt.ylabel('P-wave Probability')
+            plt.title(f'Station {station_info["station"]} - Model Output')
+            plt.ylim(0, 1)
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+
+            feature_mode = "Physics-Informed" if use_physics_features else "Raw Waveform"
+            plt.title(f'Model Predictions {i} - {feature_mode} Mode', fontsize=14)
+            plt.tight_layout()
+            plt.savefig(f"{save_path}/{i}_predictions.png", dpi=150, bbox_inches='tight')
+            plt.show()
 
 # ═══════════════════════════════════════════════════════════════════════════════════════
 # 🏗️ MAIN EXECUTION
 # ═══════════════════════════════════════════════════════════════════════════════════════
 
-def main(use_physics_features=True, use_shift_gradient=True, num_epochs=25, 
-         db_path='seismic_data.db', batch_size=4):
+def main(use_physics_features=True, use_max_amplitude=True, window_length=None,
+         num_epochs=25, 
+         db_path='seismic_data.db', batch_size=4, use_median_filter=True):
     """
     Main execution function for ML pipeline
     
@@ -915,7 +953,7 @@ def main(use_physics_features=True, use_shift_gradient=True, num_epochs=25,
     
     feature_mode = "Physics-Informed" if use_physics_features else "Raw Waveform Only"
     print(f"🔧 Configuration: {feature_mode} mode")
-    print(f"🔧 Shift Gradient: {'Enabled' if use_shift_gradient else 'Disabled'}")
+    print(f"🔧 Max Amplitude: {'Enabled' if use_max_amplitude else 'Disabled'}")
     print(f"🕐 Training epochs: {num_epochs}")
     print(f"📊 Database: {db_path}")
     
@@ -936,19 +974,21 @@ def main(use_physics_features=True, use_shift_gradient=True, num_epochs=25,
         db_path=db_path,
         window_size=5,
         use_physics_features=use_physics_features,
-        use_shift_gradient=use_shift_gradient,
+        use_max_amplitude=use_max_amplitude,
+        window_length=window_length,
         train=True
     )
-    
+
     print("Creating validation dataset...")
     val_dataset = SeismicDatabaseDataset(
         db_path=db_path,
         window_size=5,
         use_physics_features=use_physics_features,
-        use_shift_gradient=use_shift_gradient,
+        use_max_amplitude=use_max_amplitude,
+        window_length=window_length,
         train=False
     )
-    
+
     print(f"✅ Training dataset size: {len(train_dataset)}")
     print(f"✅ Validation dataset size: {len(val_dataset)}")
     
@@ -961,9 +1001,10 @@ def main(use_physics_features=True, use_shift_gradient=True, num_epochs=25,
     print("-" * 50)
     
     visualize_features(train_dataset, sample_idx=0, 
-                      save_path=f'{"physics_" if use_physics_features else "raw_"}features.png',
-                      use_physics_features=use_physics_features)
-    
+                      save_path='predictions_withoutMxAmp',
+                      use_physics_features=use_physics_features, use_max_amplitude=use_max_amplitude, 
+                      window_length=window_length)
+
     # Create data loaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
@@ -1074,19 +1115,18 @@ def main(use_physics_features=True, use_shift_gradient=True, num_epochs=25,
     plt.show()
     
     # Plot model predictions
-    pred_save_name = f'{"physics_informed" if use_physics_features else "raw_waveform"}_predictions.png'
-    plot_model_predictions(model, val_dataset, num_examples=5, 
-                          save_path=pred_save_name, use_physics_features=use_physics_features)
-    
+    plot_model_predictions(model, val_dataset, num_examples=len(val_dataset), 
+                          save_path='predictions_with_MaxAmp', use_physics_features=use_physics_features)
+
     # Print final feature weights if using physics features
     if use_physics_features and hasattr(model, 'feature_weights') and model.feature_weights is not None:
         print(f"\n🎛️ Final learned feature weights:")
         feature_names = ['Raw', 'STA/LTA 1', 'Log STA/LTA 1', 'STA/LTA 2', 'Log STA/LTA 2', 
                         'STA/LTA 3', 'Log STA/LTA 3', 'Envelope', 'Env. Deriv.', 'Inst. Freq.',
                         'Low Energy', 'Low Env.', 'Mid Energy', 'Mid Env.', 'High Energy', 'High Env.']
-        if use_shift_gradient:
-            feature_names.append('Shift Gradient')
-        
+        if use_max_amplitude:
+            feature_names.append('Max Amplitude')
+
         weights = model.feature_weights.data.cpu().numpy()
         for i, (name, weight) in enumerate(zip(feature_names[:len(weights)], weights)):
             print(f"  {name:15s}: {weight:.4f}")
@@ -1106,15 +1146,16 @@ if __name__ == "__main__":
     
     # Toggle physics-informed features ON/OFF
     USE_PHYSICS_FEATURES = True   # Set to False for raw waveform only
-    
-    # Toggle shift gradient feature ON/OFF
-    USE_SHIFT_GRADIENT = True  # Set to False to disable shift gradient feature
-    
+
+    # Toggle max amplitude feature ON/OFF
+    USE_MAX_AMPLITUDE = True  # Set to False to disable max amplitude feature
+    window_length = np.array([100, 200, 500])  # Window lengths for max amplitude feature
+
     # Set number of training epochs
-    TRAINING_EPOCHS = 50
+    TRAINING_EPOCHS = 100
     
     # Database path
-    DATABASE_PATH = 'seismic_data.db'
+    DATABASE_PATH = 'seismic_data_2.db'
     
     # Batch size
     BATCH_SIZE = 4
@@ -1122,7 +1163,8 @@ if __name__ == "__main__":
     # Run the main function with your configuration
     main(
         use_physics_features=USE_PHYSICS_FEATURES,
-        use_shift_gradient=USE_SHIFT_GRADIENT,
+        use_max_amplitude=USE_MAX_AMPLITUDE,
+        window_length=window_length,
         num_epochs=TRAINING_EPOCHS,
         db_path=DATABASE_PATH,
         batch_size=BATCH_SIZE
