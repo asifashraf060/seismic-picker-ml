@@ -1,0 +1,16 @@
+#!/bin/bash
+
+#SBATCH --partition=gpu            ### Partition (like a queue in PBS)
+#SBATCH --job-name=ML-P-picker     ### Job Name
+#SBATCH --output=logs/ml.out       ### File in which to store job output
+#SBATCH --error=logs/ml.err        ### File in which to store job error messages
+#SBATCH --time=1-00:00:00          ### Wall clock time limit in Days-HH:MM:SS
+#SBATCH --nodes=1                  ### Node count required for the job
+#SBATCH --ntasks-per-node=1        ### Number of tasks to be launched per Node
+#SBATCH --cpus-per-task=1          ### Number of cpus/cores to be launched per Task
+
+source ~/proteus/miniconda3/etc/profile.d/conda.sh
+
+conda activate ~/proteus/miniconda3/bin/ml-env1
+
+srun python ML-pipeline.py

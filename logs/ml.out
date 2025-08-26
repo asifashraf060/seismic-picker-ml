@@ -1,0 +1,118 @@
+================================================================================
+TRANSFORMER SELF-ATTENTION SEISMIC PHASE PICKER - ML PIPELINE
+================================================================================
+🔧 Configuration: Physics-Informed mode
+🔧 Max Amplitude: Enabled
+🔧 Transformer Heads: 2
+🕐 Training epochs: 200
+📊 Database: seismic_data_2.db
+
+
+--------------------------------------------------
+LOADING DATA FROM DATABASE - PHYSICS-INFORMED MODE
+--------------------------------------------------
+Creating training dataset...
+Available tables in database: ['earthquakes', 'sqlite_sequence', 'waveforms']
+Loading training set: 358 waveforms
+Successfully processed 358 waveforms
+Creating validation dataset...
+Available tables in database: ['earthquakes', 'sqlite_sequence', 'waveforms']
+Loading validation set: 90 waveforms
+Successfully processed 90 waveforms
+✅ Training dataset size: 358
+✅ Validation dataset size: 90
+
+📊 VISUALIZING PHYSICS-INFORMED FEATURES WITH TRANSFORMER
+--------------------------------------------------
+Visualizing and saving waveform features...
+
+
+--------------------------------------------------
+INITIALIZING TRANSFORMER PHYSICS-INFORMED MODEL
+--------------------------------------------------
+✅ Input channels (features): 19
+✅ Feature shape: torch.Size([19, 12300])
+✅ Transformer attention heads: 2
+Total parameters: 1,561,493
+Trainable parameters: 1,561,493
+
+
+--------------------------------------------------
+🚀 STARTING TRAINING WITH TRANSFORMER SELF-ATTENTION
+--------------------------------------------------
+Epoch 1/200, Train Loss: 0.3891, Val Loss: 0.3402, LR: 0.001000
+Epoch 2/200, Train Loss: 0.3381, Val Loss: 0.3394, LR: 0.001000
+Epoch 3/200, Train Loss: 0.3352, Val Loss: 0.3391, LR: 0.001000
+Epoch 4/200, Train Loss: 0.3335, Val Loss: 0.3371, LR: 0.001000
+Epoch 5/200, Train Loss: 0.3335, Val Loss: 0.3395, LR: 0.001000
+Epoch 6/200, Train Loss: 0.3329, Val Loss: 0.3381, LR: 0.001000
+Epoch 7/200, Train Loss: 0.3318, Val Loss: 0.3415, LR: 0.001000
+Epoch 8/200, Train Loss: 0.3322, Val Loss: 0.3366, LR: 0.001000
+Epoch 9/200, Train Loss: 0.3320, Val Loss: 0.3345, LR: 0.001000
+Epoch 10/200, Train Loss: 0.3314, Val Loss: 0.3359, LR: 0.001000
+Epoch 11/200, Train Loss: 0.3313, Val Loss: 0.3359, LR: 0.001000
+Epoch 12/200, Train Loss: 0.3311, Val Loss: 0.3344, LR: 0.001000
+Epoch 13/200, Train Loss: 0.3313, Val Loss: 0.3351, LR: 0.001000
+Epoch 14/200, Train Loss: 0.3305, Val Loss: 0.3343, LR: 0.001000
+Epoch 15/200, Train Loss: 0.3306, Val Loss: 0.3377, LR: 0.001000
+Epoch 16/200, Train Loss: 0.3303, Val Loss: 0.3381, LR: 0.001000
+Epoch 17/200, Train Loss: 0.3302, Val Loss: 0.3349, LR: 0.001000
+Epoch 18/200, Train Loss: 0.3300, Val Loss: 0.3356, LR: 0.001000
+Epoch 19/200, Train Loss: 0.3295, Val Loss: 0.3320, LR: 0.001000
+Epoch 20/200, Train Loss: 0.3300, Val Loss: 0.3395, LR: 0.001000
+Epoch 21/200, Train Loss: 0.3294, Val Loss: 0.3384, LR: 0.001000
+Epoch 22/200, Train Loss: 0.3291, Val Loss: 0.3363, LR: 0.001000
+Epoch 23/200, Train Loss: 0.3294, Val Loss: 0.3383, LR: 0.001000
+Epoch 24/200, Train Loss: 0.3291, Val Loss: 0.3424, LR: 0.001000
+Epoch 25/200, Train Loss: 0.3293, Val Loss: 0.3363, LR: 0.000500
+Epoch 26/200, Train Loss: 0.3284, Val Loss: 0.3375, LR: 0.000500
+Epoch 27/200, Train Loss: 0.3279, Val Loss: 0.3408, LR: 0.000500
+Epoch 28/200, Train Loss: 0.3279, Val Loss: 0.3393, LR: 0.000500
+Epoch 29/200, Train Loss: 0.3278, Val Loss: 0.3382, LR: 0.000500
+Early stopping triggered
+✅ Loaded best transformer model from training
+
+📊 EVALUATING TRANSFORMER MODEL
+--------------------------------------------------
+
+🎯 PICK ACCURACY RESULTS - TRANSFORMER PHYSICS-INFORMED MODE
+============================================================
+Mean absolute error: 1.5237 ± 4.4600 seconds
+Median absolute error: 0.4250 seconds
+90th percentile error: 1.5610 seconds
+95th percentile error: 6.8135 seconds
+
+📈 Performance Categories:
+  Excellent (< 0.5s):  50 (55.6%)
+  Good (0.5-1.0s):    22 (24.4%)
+  Fair (1.0-2.0s):    11 (12.2%)
+  Poor (> 2.0s):       7 (7.8%)
+
+📊 CREATING TRANSFORMER VISUALIZATIONS
+--------------------------------------------------
+
+🎛️ Final learned feature weights (Transformer):
+  Raw            : 0.8540
+  STA/LTA 1      : 0.9344
+  Log STA/LTA 1  : 0.7344
+  STA/LTA 2      : 0.9052
+  Log STA/LTA 2  : 0.7257
+  STA/LTA 3      : 0.8816
+  Log STA/LTA 3  : 0.6707
+  Envelope       : 1.1451
+  Env. Deriv.    : 2.0532
+  Inst. Freq.    : 0.9454
+  Low Energy     : 0.9064
+  Low Env.       : 1.2822
+  Mid Energy     : 1.1810
+  Mid Env.       : 1.8964
+  High Energy    : 1.2870
+  High Env.      : 2.0730
+  Max Amp WL:100 : 1.3080
+  Max Amp WL:200 : 1.6714
+  Max Amp WL:500 : 1.1591
+
+💾 Model saved as 'transformer_physics_informed_phase_picker.pth'
+
+🎉 TRAINING COMPLETE - TRANSFORMER PHYSICS-INFORMED MODE!
+================================================================================

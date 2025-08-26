@@ -161,7 +161,7 @@ class PhysicsInformedFeatures:
 
 class MaxAmplitudeFeature:
     @staticmethod
-    def compute(waveform: np.ndarray, target_length: int, window_length: np.array) -> np.ndarray:
+    def compute(waveform: np.ndarray, target_length: int, window_length: np.array, sampling_rate = 100) -> np.ndarray:
         """Compute max amplitude features from a waveform"""
 
         all_features = []
@@ -169,8 +169,25 @@ class MaxAmplitudeFeature:
         for wlen in window_length:
             wlen = int(wlen)
 
+            nyquist_freq = sampling_rate / 2.0
+            
+            # Define filter frequency band (3-12 Hz is typical for P-wave detection)
+            lowcut = 3.0  # Hz
+            highcut = 12.0  # Hz
+            
+            # Normalize frequencies by Nyquist frequency for digital filter
+            low_norm = lowcut / nyquist_freq
+            high_norm = highcut / nyquist_freq
+
+            # Create filter coefficients
+            b, a = signal.butter(4, [low_norm, high_norm], 
+                               btype='bandpass', analog=False, output='ba')
+            
+            # Apply forward-backward filter (zero phase distortion)
+            waveform_bt = signal.filtfilt(b, a, waveform)
+    
             # 1) Convert all negative values to positive (absolute value)
-            abs_waveform = np.abs(waveform)
+            abs_waveform = np.abs(waveform_bt)
 
             # 2) Find the maximum value (peak)
             max_val = np.max(abs_waveform)
@@ -721,100 +738,101 @@ def evaluate_picks(model, val_dataset, threshold=0.5):
     
     return np.array(pick_errors)
 
-def visualize_features(dataset, sample_idx=0, save_path='features.png', use_physics_features=True,
+def visualize_features(dataset, save_path='features_afterButter', use_physics_features=True,
                        use_max_amplitude=True, window_length=None):
-    """Visualize the features for a sample"""
-    if sample_idx >= len(dataset):
-        print(f"Sample index {sample_idx} out of range")
-        return
-    
-    features, label = dataset[sample_idx]
-    features_np = features.numpy()
-    label_np = label.numpy()
-    
-    # Feature names based on mode
-    if use_physics_features:
-        feature_names = [
-            'Raw Waveform',
-            'STA/LTA (0.5/10s)', 'Log STA/LTA (0.5/10s)',
-            'STA/LTA (1/20s)', 'Log STA/LTA (1/20s)', 
-            'STA/LTA (2/30s)', 'Log STA/LTA (2/30s)',
-            'Envelope', 'Envelope Derivative', 'Instantaneous Frequency',
-            'Low Freq Energy', 'Low Freq Envelope',
-            'Mid Freq Energy', 'Mid Freq Envelope', 
-            'High Freq Energy', 'High Freq Envelope'
-        ]
-        title_suffix = "Physics-Informed Features"
-    else:
-        feature_names = ['Raw Waveform']
-        title_suffix = "Raw Waveform Only"
+    """Visualize the features for all the samples"""
+    if not os.path.exists(save_path):
+        os.mkdir(save_path)
 
-    # Account for max amplitude feature if present
-    if use_max_amplitude:
-        for i in range(len(window_length)):
-            feature_names.append(f'Max Filter WL:{int(window_length[i])}')
+    for sample_idx in range(len(dataset)):
 
-    # Truncate if we have fewer features than expected
-    n_features = min(len(feature_names), features_np.shape[0])
-    
-    # Create time vector
-    n_samples = features_np.shape[1]
-    time_vector = np.linspace(-3, 120, n_samples)  # Assuming 3s pre, 120s post
-    
-    # Create subplot grid
-    if n_features == 1:
-        # Single plot for raw waveform only
-        fig, ax = plt.subplots(1, 1, figsize=(12, 4))
-        axes = [ax]
-        n_rows, n_cols = 1, 1
-    else:
-        # Multiple plots for physics features
-        n_cols = 2
-        n_rows = (n_features + n_cols - 1) // n_cols
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(16, 3*n_rows))
-        if n_rows == 1:
-            axes = axes.reshape(1, -1)
-        axes = axes.flatten()
-    
-    for i in range(n_features):
-        ax = axes[i]
+        features, label = dataset[sample_idx]
+        features_np = features.numpy()
+        label_np = label.numpy()
         
-        # Plot feature
-        ax.plot(time_vector, features_np[i], 'b-', linewidth=1, alpha=0.8)
+        # Feature names based on mode
+        if use_physics_features:
+            feature_names = [
+                'Raw Waveform',
+                'STA/LTA (0.5/10s)', 'Log STA/LTA (0.5/10s)',
+                'STA/LTA (1/20s)', 'Log STA/LTA (1/20s)', 
+                'STA/LTA (2/30s)', 'Log STA/LTA (2/30s)',
+                'Envelope', 'Envelope Derivative', 'Instantaneous Frequency',
+                'Low Freq Energy', 'Low Freq Envelope',
+                'Mid Freq Energy', 'Mid Freq Envelope', 
+                'High Freq Energy', 'High Freq Envelope'
+            ]
+            title_suffix = "Physics-Informed Features"
+        else:
+            feature_names = ['Raw Waveform']
+            title_suffix = "Raw Waveform Only"
+
+        # Account for max amplitude feature if present
+        if use_max_amplitude:
+            for i in range(len(window_length)):
+                feature_names.append(f'Max Filter WL:{int(window_length[i])}')
+
+        # Truncate if we have fewer features than expected
+        n_features = min(len(feature_names), features_np.shape[0])
         
-        # Highlight P-wave region
-        p_wave_mask = label_np == 1
-        if np.any(p_wave_mask):
-            p_wave_times = time_vector[p_wave_mask]
-            ax.axvspan(p_wave_times[0], p_wave_times[-1], alpha=0.3, color='red', 
-                      label='P-wave Window')
+        # Create time vector
+        n_samples = features_np.shape[1]
+        time_vector = np.linspace(-3, 120, n_samples)  # Assuming 3s pre, 120s post
         
-        # Add earthquake time reference
-        ax.axvline(0, color='orange', linestyle=':', alpha=0.7, label='Earthquake Time')
+        # Create subplot grid
+        if n_features == 1:
+            # Single plot for raw waveform only
+            fig, ax = plt.subplots(1, 1, figsize=(12, 4))
+            axes = [ax]
+            n_rows, n_cols = 1, 1
+        else:
+            # Multiple plots for physics features
+            n_cols = 2
+            n_rows = (n_features + n_cols - 1) // n_cols
+            fig, axes = plt.subplots(n_rows, n_cols, figsize=(16, 3*n_rows))
+            if n_rows == 1:
+                axes = axes.reshape(1, -1)
+            axes = axes.flatten()
         
-        ax.set_title(feature_names[i] if i < len(feature_names) else f'Feature {i}')
-        ax.set_xlabel('Time (s)')
-        ax.grid(True, alpha=0.3)
+        for i in range(n_features):
+            ax = axes[i]
+            
+            # Plot feature
+            ax.plot(time_vector, features_np[i], 'b-', linewidth=1, alpha=0.8)
+            
+            # Highlight P-wave region
+            p_wave_mask = label_np == 1
+            if np.any(p_wave_mask):
+                p_wave_times = time_vector[p_wave_mask]
+                ax.axvspan(p_wave_times[0], p_wave_times[-1], alpha=0.3, color='red', 
+                        label='P-wave Window')
+            
+            # Add earthquake time reference
+            ax.axvline(0, color='orange', linestyle=':', alpha=0.7, label='Earthquake Time')
+            
+            ax.set_title(feature_names[i] if i < len(feature_names) else f'Feature {i}')
+            ax.set_xlabel('Time (s)')
+            ax.grid(True, alpha=0.3)
+            
+            if i == 0:  # Add legend only to first subplot
+                ax.legend()
         
-        if i == 0:  # Add legend only to first subplot
-            ax.legend()
-    
-    # Hide empty subplots
-    if n_features > 1:
-        for i in range(n_features, len(axes)):
-            axes[i].set_visible(False)
-    
-    plt.suptitle(f'Seismic Features Visualization - {title_suffix}', fontsize=14)
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.show()
-    print(f"Features visualization saved to {save_path}")
+        # Hide empty subplots
+        if n_features > 1:
+            for i in range(n_features, len(axes)):
+                axes[i].set_visible(False)
+        
+        plt.tight_layout()
+        plt.savefig(f'{save_path}/features_of_seismogram{sample_idx}.png', dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"Features visualization saved to {save_path}")
 
 def plot_model_predictions(model, dataset, num_examples=1, save_path='predictions', 
                           use_physics_features=True):
     """Plot model predictions with features"""
     if not os.path.exists(save_path):
         os.mkdir(save_path)
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.to(device)
     model.eval()
@@ -924,7 +942,7 @@ def plot_model_predictions(model, dataset, num_examples=1, save_path='prediction
             plt.title(f'Model Predictions {i} - {feature_mode} Mode', fontsize=14)
             plt.tight_layout()
             plt.savefig(f"{save_path}/{i}_predictions.png", dpi=150, bbox_inches='tight')
-            plt.show()
+            plt.close()
 
 # ═══════════════════════════════════════════════════════════════════════════════════════
 # 🏗️ MAIN EXECUTION
@@ -1000,11 +1018,13 @@ def main(use_physics_features=True, use_max_amplitude=True, window_length=None,
     print(f"\n📊 VISUALIZING {feature_mode.upper()} FEATURES")
     print("-" * 50)
     
-    visualize_features(train_dataset, sample_idx=0, 
-                      save_path='predictions_withoutMxAmp',
+    print('Visualizing and saving waveform features...')
+    '''
+    visualize_features(val_dataset, 
+                      save_path='features',
                       use_physics_features=use_physics_features, use_max_amplitude=use_max_amplitude, 
                       window_length=window_length)
-
+    '''
     # Create data loaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
@@ -1116,7 +1136,7 @@ def main(use_physics_features=True, use_max_amplitude=True, window_length=None,
     
     # Plot model predictions
     plot_model_predictions(model, val_dataset, num_examples=len(val_dataset), 
-                          save_path='predictions_with_MaxAmp', use_physics_features=use_physics_features)
+                          save_path='predictions', use_physics_features=use_physics_features)
 
     # Print final feature weights if using physics features
     if use_physics_features and hasattr(model, 'feature_weights') and model.feature_weights is not None:
@@ -1145,14 +1165,14 @@ if __name__ == "__main__":
     # ═══════════════════════════════════════════════════════════════════════════════════════
     
     # Toggle physics-informed features ON/OFF
-    USE_PHYSICS_FEATURES = True   # Set to False for raw waveform only
+    USE_PHYSICS_FEATURES = False   # Set to False for raw waveform only
 
     # Toggle max amplitude feature ON/OFF
-    USE_MAX_AMPLITUDE = True  # Set to False to disable max amplitude feature
+    USE_MAX_AMPLITUDE = False  # Set to False to disable max amplitude feature
     window_length = np.array([100, 200, 500])  # Window lengths for max amplitude feature
 
     # Set number of training epochs
-    TRAINING_EPOCHS = 100
+    TRAINING_EPOCHS = 200
     
     # Database path
     DATABASE_PATH = 'seismic_data_2.db'
